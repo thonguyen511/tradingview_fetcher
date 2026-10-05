@@ -81,20 +81,20 @@ def trigger_github_restart(node_idx, mode):
             pass
 
     if gh_pat:
-        url = f"https://api.github.com/repos/{gh_repo}/actions/workflows/node_runner.yml/dispatches"
-        headers = {
-            "Authorization": f"Bearer {gh_pat}",
+        url = "https://api.github.com/repos/" + str(gh_repo) + "/actions/workflows/node_runner.yml/dispatches"
+        headers = {{
+            "Authorization": "Bearer " + str(gh_pat),
             "Accept": "application/vnd.github.v3+json"
-        }
-        data = {
+        }}
+        data = {{
             "ref": "main",
-            "inputs": {{"node": str(node_idx), "mode": mode}}
-        }
+            "inputs": {{"node": str(node_idx), "mode": str(mode)}}
+        }}
         try:
             res = requests.post(url, headers=headers, json=data, timeout=15)
-            print(f"📡 Re-triggered GitHub Actions for Node {{node_idx}}: HTTP {{res.status_code}}")
+            print("📡 Re-triggered GitHub Actions for Node " + str(node_idx) + ": HTTP " + str(res.status_code))
         except Exception as e:
-            print(f"⚠️ Failed to re-trigger GitHub Actions: {{e}}")
+            print("⚠️ Failed to re-trigger GitHub Actions: " + str(e))
     else:
         print("⚠️ GH_PAT not found in Kaggle Secrets. Cannot trigger GitHub Actions automatically.")
 
