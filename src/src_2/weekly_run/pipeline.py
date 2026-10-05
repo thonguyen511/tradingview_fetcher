@@ -46,6 +46,63 @@ completed_lock = threading.Lock()
 
 IS_STOPPED = False
 
+def weekly_probe_worker_loop(
+    worker_id: int,
+    sessionid: str,
+    sign: str,
+    jwt: str,
+    task_queue: queue.Queue,
+    retry_queue: queue.Queue,
+    is_done: threading.Event
+):
+    """Weekly Step A Worker: Concurrent 1D probe, corporate actions, and metadata extraction."""
+    fetcher = TradingView1DProbeFetcher(sessionid, sign, jwt, server="data")
+    global IS_STOPPED
+
+    while not IS_STOPPED and not is_done.is_set():
+        try:
+            task = task_queue.get(timeout=1.0)
+        except queue.Empty:
+            fetcher.client.keep_alive()
+            continue
+
+        symbol, is_futures, is_retry = task
+        task_key = f"{symbol}_1D"
+        time.sleep(random.uniform(0.04, 0.08))
+
+        try:
+            bars, events, sym_info, err_cat, err_det = fetcher.fetch_1d_and_events(
+                symbol=symbol,
+                is_futures=is_futures
+            )
+            if bars:
+                with results_lock:
+                    results_dict[task_key] = {
+                        "symbol": symbol,
+                        "interval": "1D",
+                        "bars": bars,
+                        "sym_info": sym_info
+                    }
+                with events_lock:
+                    symbol_events[symbol] = events
+            else:
+                if err_cat in ["tradingview_message", "server_network_error"]:
+                    log_failure(symbol, "1D", err_cat, err_det, log_dir=LOG_DIR)
+                    with completed_lock:
+                        for any_int in ALL_INTERVALS:
+                            COMPLETED_TASKS.add(f"{symbol} ({any_int})")
+                else:
+                    if not is_retry:
+                        retry_queue.put((symbol, is_futures, True))
+        except Exception:
+            if not is_retry:
+                retry_queue.put((symbol, is_futures, True))
+        finally:
+            task_queue.task_done()
+
+    fetcher.close()
+
+
 def weekly_worker_loop(
     worker_id: int,
     sessionid: str,
@@ -69,7 +126,7 @@ def weekly_worker_loop(
 
         symbol, interval, is_retry = task
         task_key = f"{symbol}_{interval}"
-        time.sleep(random.uniform(0.02, 0.05))
+        time.sleep(random.uniform(0.04, 0.08))
 
         try:
             bars, sym_info, err_cat, err_det = fetcher.fetch_recent_bars(
@@ -86,7 +143,7 @@ def weekly_worker_loop(
                         "sym_info": sym_info
                     }
             else:
-                if err_cat == "tradingview_message":
+                if err_cat in ["tradingview_message", "server_network_error"]:
                     log_failure(symbol, interval, err_cat, err_det, log_dir=LOG_DIR)
                     with completed_lock:
                         COMPLETED_TASKS.add(f"{symbol} ({interval})")
@@ -167,44 +224,69 @@ def run_weekly_pipeline(
         with events_lock:
             symbol_events.clear()
 
-        # Step A: 1D Resolution & Corporate Actions Probe
-        print("🔍 Probing 1D Timeframe & Updating Corporate Actions...")
-        p1_fetcher = TradingView1DProbeFetcher(sessionid, sign, jwt_token)
-        valid_symbols = []
-        intraday_eligible = []
+        # Step A: 1D Resolution & Corporate Actions Probe (Concurrent across FREE_WORKERS)
+        print(f"🔍 Probing 1D Timeframe & Corporate Actions across {FREE_WORKERS} workers...")
+        p1_queue = queue.Queue()
+        p1_retry_queue = queue.Queue()
+        is_p1_done = threading.Event()
 
+        queued_1d = 0
         for sym in symbols:
             if f"{sym} (1D)" not in COMPLETED_TASKS:
-                bars, events, sym_info, err_cat, err_det = p1_fetcher.fetch_1d_and_events(
-                    symbol=sym,
-                    is_futures=is_futures
+                p1_queue.put((sym, is_futures, False))
+                queued_1d += 1
+
+        if queued_1d > 0:
+            p1_threads = []
+            for w_id in range(FREE_WORKERS):
+                t = threading.Thread(
+                    target=weekly_probe_worker_loop,
+                    args=(w_id, sessionid, sign, jwt_token, p1_queue, p1_retry_queue, is_p1_done),
+                    daemon=True
                 )
-                if bars:
-                    valid_symbols.append(sym)
-                    with results_lock:
-                        results_dict[f"{sym}_1D"] = {
-                            "symbol": sym,
-                            "interval": "1D",
-                            "bars": bars,
-                            "sym_info": sym_info
-                        }
-                    with events_lock:
-                        symbol_events[sym] = events
+                t.start()
+                p1_threads.append(t)
+                time.sleep(0.02)
 
-                    has_intra = sym_info.get("has_intraday", True) if sym_info else True
-                    if has_intra:
-                        intraday_eligible.append(sym)
-                else:
-                    # Symbol has no candlestick data on TradingView -> mark all intervals skipped
-                    log_failure(sym, "1D", err_cat or "tradingview_message", err_det or "no_data", log_dir=LOG_DIR)
-                    with completed_lock:
-                        for any_int in ALL_INTERVALS:
-                            COMPLETED_TASKS.add(f"{sym} ({any_int})")
-            else:
+            wait_queues_periodic_log([(p1_queue, queued_1d)], desc="Weekly 1D & Corporate Actions Probe")
+
+            # Retry transient drops
+            retry_round = 1
+            while not p1_retry_queue.empty() and retry_round <= MAX_NETWORK_RETRIES:
+                retries = []
+                while not p1_retry_queue.empty():
+                    retries.append(p1_retry_queue.get())
+                if not retries: break
+                time.sleep(2.0 * retry_round)
+                for r in retries:
+                    p1_queue.put((r[0], r[1], True))
+                wait_queues_periodic_log([(p1_queue, len(retries))], desc=f"Probe Retry Round {retry_round}")
+                retry_round += 1
+
+            # Log permanent failures
+            while not p1_retry_queue.empty():
+                f_sym, _, _ = p1_retry_queue.get()
+                log_failure(f_sym, "1D", "server_network_error", f"Exceeded {MAX_NETWORK_RETRIES} retries", log_dir=LOG_DIR)
+                with completed_lock:
+                    for any_int in ALL_INTERVALS:
+                        COMPLETED_TASKS.add(f"{f_sym} ({any_int})")
+
+            is_p1_done.set()
+            for t in p1_threads:
+                t.join(timeout=3.0)
+
+        # Identify valid symbols that actually have 1D candlestick data
+        valid_symbols = []
+        intraday_eligible = []
+        for sym in symbols:
+            res = results_dict.get(f"{sym}_1D")
+            if res and res.get("bars"):
                 valid_symbols.append(sym)
-                intraday_eligible.append(sym)
+                sym_info = res.get("sym_info")
+                has_intra = sym_info.get("has_intraday", True) if sym_info else True
+                if has_intra:
+                    intraday_eligible.append(sym)
 
-        p1_fetcher.close()
         print(f"   -> {len(valid_symbols)}/{len(symbols)} symbols valid with 1D candlestick data.")
         print(f"   -> {len(intraday_eligible)}/{len(symbols)} symbols eligible for intraday updates.")
 
