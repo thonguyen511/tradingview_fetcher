@@ -38,8 +38,22 @@ print("=" * 80)
 # 1. Install dependencies
 subprocess.run([sys.executable, "-m", "pip", "install", "-q", "websocket-client", "huggingface_hub", "cryptography", "pandas", "pyarrow", "requests"], check=True)
 
-# 2. Clone CSV symbols and map.json from tradingview_aio_symbols
+# 2. Clone engine codebase from GitHub
 work_dir = "/kaggle/working"
+app_dir = os.path.join(work_dir, "app")
+os.chdir(work_dir)
+
+if not os.path.exists(app_dir):
+    print("📥 Cloning engine codebase from https://github.com/thonguyen511/tradingview_fetcher.git...")
+    subprocess.run(["git", "clone", "--depth", "1", "https://github.com/thonguyen511/tradingview_fetcher.git", app_dir], check=True)
+else:
+    print("🔄 Pulling latest engine codebase...")
+    subprocess.run(["git", "-C", app_dir, "pull"], check=False)
+
+if app_dir not in sys.path:
+    sys.path.insert(0, app_dir)
+
+# 3. Clone CSV symbols and map.json from tradingview_aio_symbols
 csv_target = os.path.join(work_dir, "data", "AIO_CSV")
 os.makedirs(os.path.dirname(csv_target), exist_ok=True)
 
@@ -49,10 +63,6 @@ if not os.path.exists(csv_target):
 else:
     print("🔄 Pulling latest symbols updates...")
     subprocess.run(["git", "-C", csv_target, "pull"], check=False)
-
-# Add working directory to pythonpath so bundled src is found immediately
-if work_dir not in sys.path:
-    sys.path.insert(0, work_dir)
 
 os.environ["NOTEBOOK_INDEX"] = "{node_index}"
 os.environ["TOTAL_NOTEBOOKS"] = "{TOTAL_NOTEBOOKS}"
@@ -125,7 +135,7 @@ def prepare_kernel_folder(
 
     metadata = {
         "id": f"{account['username']}/{kernel_slug}",
-        "title": f"TV Ingestion Node {node_index} {mode.capitalize()}",
+        "title": kernel_slug,
         "code_file": "main.py",
         "language": "python",
         "kernel_type": "script",
