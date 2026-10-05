@@ -170,6 +170,7 @@ def run_weekly_pipeline(
         # Step A: 1D Resolution & Corporate Actions Probe
         print("🔍 Probing 1D Timeframe & Updating Corporate Actions...")
         p1_fetcher = TradingView1DProbeFetcher(sessionid, sign, jwt_token)
+        valid_symbols = []
         intraday_eligible = []
 
         for sym in symbols:
@@ -179,6 +180,7 @@ def run_weekly_pipeline(
                     is_futures=is_futures
                 )
                 if bars:
+                    valid_symbols.append(sym)
                     with results_lock:
                         results_dict[f"{sym}_1D"] = {
                             "symbol": sym,
@@ -193,14 +195,17 @@ def run_weekly_pipeline(
                     if has_intra:
                         intraday_eligible.append(sym)
                 else:
-                    if err_cat == "tradingview_message":
-                        log_failure(sym, "1D", err_cat, err_det, log_dir=LOG_DIR)
-                        with completed_lock:
-                            COMPLETED_TASKS.add(f"{sym} (1D)")
+                    # Symbol has no candlestick data on TradingView -> mark all intervals skipped
+                    log_failure(sym, "1D", err_cat or "tradingview_message", err_det or "no_data", log_dir=LOG_DIR)
+                    with completed_lock:
+                        for any_int in ALL_INTERVALS:
+                            COMPLETED_TASKS.add(f"{sym} ({any_int})")
             else:
+                valid_symbols.append(sym)
                 intraday_eligible.append(sym)
 
         p1_fetcher.close()
+        print(f"   -> {len(valid_symbols)}/{len(symbols)} symbols valid with 1D candlestick data.")
         print(f"   -> {len(intraday_eligible)}/{len(symbols)} symbols eligible for intraday updates.")
 
         # Step B: Queue Remaining Intervals (1W, 1M, and Intraday)
@@ -210,14 +215,14 @@ def run_weekly_pipeline(
 
         queued_tasks = 0
 
-        # Queue Macro (1W, 1M)
+        # Queue Macro (1W, 1M) for valid symbols ONLY
         for m_int in ["1W", "1M"]:
-            for sym in symbols:
+            for sym in valid_symbols:
                 if f"{sym} ({m_int})" not in COMPLETED_TASKS:
                     weekly_queue.put((sym, m_int, False))
                     queued_tasks += 1
 
-        # Queue Intraday Intervals
+        # Queue Intraday Intervals for eligible symbols
         for i_int in INTRADAY_INTERVALS:
             for sym in intraday_eligible:
                 if f"{sym} ({i_int})" not in COMPLETED_TASKS:

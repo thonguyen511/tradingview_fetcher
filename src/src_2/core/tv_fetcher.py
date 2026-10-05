@@ -128,7 +128,7 @@ class TradingView1DProbeFetcher:
                 if error_cat:
                     break
 
-                if series_done and (not required_studies or completed_studies >= required_studies):
+                if (series_done or bars) and (not required_studies or completed_studies >= required_studies):
                     break
 
             if not bars and not error_cat:
@@ -319,7 +319,7 @@ class TradingViewWeeklyFetcher:
         symbol: str,
         interval: str,
         n_bars: int = 300,
-        timeout: float = 10.0
+        timeout: float = 3.5
     ) -> Tuple[List[list], Optional[Dict[str, Any]], Optional[str], Optional[str]]:
         bars = []
         sym_info = None
@@ -339,7 +339,7 @@ class TradingViewWeeklyFetcher:
 
             while time.time() - loop_start < timeout:
                 try:
-                    messages = self.client.recv_messages(timeout=2.0)
+                    messages = self.client.recv_messages(timeout=1.5)
                 except Exception:
                     continue
 
@@ -357,6 +357,9 @@ class TradingViewWeeklyFetcher:
                             v = bar.get("v", [])
                             if len(v) >= 5:
                                 bars.append([v[0], v[1], v[2], v[3], v[4], v[5] if len(v) > 5 else 0.0])
+                        if bars:
+                            series_done = True
+                            break
 
                     elif meth == "series_completed" and params and params[0] == cs_id:
                         series_done = True

@@ -376,15 +376,24 @@ def run_initial_pipeline(
             for t in p1_threads:
                 t.join(timeout=3.0)
 
-        # Identify intraday-eligible symbols via has_intraday
+        # Identify valid symbols that actually have 1D candlestick data
+        valid_symbols = []
         intraday_symbols = []
         for sym in symbols:
             res = results_dict.get(f"{sym}_1D")
-            sym_info = res.get("sym_info") if res else None
-            has_intra = sym_info.get("has_intraday", True) if sym_info else True
-            if has_intra:
-                intraday_symbols.append(sym)
+            if res and res.get("bars"):
+                valid_symbols.append(sym)
+                sym_info = res.get("sym_info")
+                has_intra = sym_info.get("has_intraday", True) if sym_info else True
+                if has_intra:
+                    intraday_symbols.append(sym)
+            else:
+                # Mark remaining intervals completed/skipped so they are never queued or retried
+                with completed_lock:
+                    for any_int in ALL_INTERVALS:
+                        COMPLETED_TASKS.add(f"{sym} ({any_int})")
 
+        print(f"   -> {len(valid_symbols)}/{len(symbols)} symbols valid with 1D candlestick data.")
         print(f"   -> {len(intraday_symbols)}/{len(symbols)} symbols support intraday intervals.")
 
         # Immediately flush 1D Parquet to disk and clear RAM
@@ -400,10 +409,10 @@ def run_initial_pipeline(
         phase2_retry_queue = queue.Queue()
         is_phase2_done = threading.Event()
 
-        # Queue Macro (1W, 1M) for Free workers
+        # Queue Macro (1W, 1M) for Free workers (valid symbols only!)
         queued_macro = 0
         for m_int in ["1W", "1M"]:
-            for sym in symbols:
+            for sym in valid_symbols:
                 if f"{sym} ({m_int})" not in COMPLETED_TASKS:
                     macro_queue.put((sym, m_int, False))
                     queued_macro += 1
