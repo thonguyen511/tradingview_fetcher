@@ -1,0 +1,39 @@
+name: Single Node Kaggle Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      node:
+        description: 'Node Index to Dispatch (0 to 19)'
+        required: true
+        default: '0'
+      mode:
+        description: 'Ingestion Mode (weekly or initial)'
+        required: true
+        default: 'weekly'
+        type: choice
+        options:
+          - weekly
+          - initial
+
+jobs:
+  dispatch_node:
+    name: Dispatch Kaggle Node ${{ github.event.inputs.node }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python Environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Ingestion Dependencies
+        run: |
+          pip install kaggle huggingface_hub pandas pyarrow requests
+
+      - name: Dispatch Node ${{ github.event.inputs.node }}
+        run: |
+          python -m src.src_2.orchestration.kaggle_dispatcher dispatch ${{ github.event.inputs.mode }} --node ${{ github.event.inputs.node }}

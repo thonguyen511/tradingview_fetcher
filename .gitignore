@@ -1,0 +1,26 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Local data, logs, and artifacts
+data/
+checkpoints/
+log/
+logs/
+temp/
+trash/
+ref/
+test/
+output/
+.playwright-mcp/
+.agents/
+src/src_1/
+
+# Secret & Environment files
+.env
+*.pem
+*.key
+hf_api.txt

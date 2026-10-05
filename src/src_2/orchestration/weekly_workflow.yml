@@ -1,0 +1,72 @@
+name: TradingView Weekly OHLCV & Corporate Actions Ingestion
+
+on:
+  schedule:
+    # Run every Sunday at 00:00 UTC (after Friday markets close and weekend settlements complete)
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Ingestion Mode (weekly or initial)'
+        required: true
+        default: 'weekly'
+        type: choice
+        options:
+          - weekly
+          - initial
+
+jobs:
+  dispatch_kaggle_nodes:
+    name: Dispatch 20 Concurrent Kaggle Workers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python Environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Ingestion Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install kaggle huggingface_hub pandas pyarrow cryptography requests
+
+      - name: Pull Latest Symbols & map.json
+        run: |
+          mkdir -p data/AIO_CSV
+          git clone --depth 1 https://github.com/thonguyen511/tradingview_aio_symbols.git data/AIO_CSV
+
+      - name: Update Greedy Map if New Symbols Appended
+        run: |
+          python -c "from src.src_2.core.greedy_allocator import update_map_incremental; update_map_incremental()"
+
+      - name: Sync Map Back to Symbols Repo If Updated
+        env:
+          GH_PAT: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          cd data/AIO_CSV
+          if [[ -n $(git status -s map.json) ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add map.json
+            git commit -m "Auto-update map.json from weekly pipeline"
+            # Push back if auth token available
+            git push "https://${GH_PAT}@github.com/thonguyen511/tradingview_aio_symbols.git" HEAD:main || true
+          fi
+          cd ../..
+
+      - name: Dispatch Kaggle Notebooks
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          TV_ULTIMATE_SESSIONID: ${{ secrets.TV_ULTIMATE_SESSIONID }}
+          TV_ULTIMATE_SIGN: ${{ secrets.TV_ULTIMATE_SIGN }}
+          DATA_PASSWORD: ${{ secrets.DATA_PASSWORD }}
+        run: |
+          python -m src.src_2.orchestration.kaggle_dispatcher dispatch ${{ github.event.inputs.mode || 'weekly' }}
+
+      - name: Monitor Execution Status (15-min checkpoint)
+        run: |
+          python -m src.src_2.orchestration.kaggle_dispatcher status
