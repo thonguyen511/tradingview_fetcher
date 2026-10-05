@@ -20,6 +20,12 @@ def generate_runner_script(
     symbols_repo: str = "https://github.com/thonguyen511/tradingview_aio_symbols.git"
 ) -> str:
     """Generates the self-contained Python script to run on Kaggle."""
+    hf_token = os.environ.get("HF_TOKEN", "")
+    gh_pat = os.environ.get("GH_PAT", "")
+    data_password = os.environ.get("DATA_PASSWORD", "")
+    tv_sessionid = os.environ.get("TV_ULTIMATE_SESSIONID", "")
+    tv_sign = os.environ.get("TV_ULTIMATE_SIGN", "")
+
     return f'''# Auto-generated runner for Node {node_index} ({mode} run)
 import os
 import sys
@@ -50,6 +56,16 @@ if work_dir not in sys.path:
 
 os.environ["NOTEBOOK_INDEX"] = "{node_index}"
 os.environ["TOTAL_NOTEBOOKS"] = "{TOTAL_NOTEBOOKS}"
+if "{hf_token}" and not os.environ.get("HF_TOKEN"):
+    os.environ["HF_TOKEN"] = "{hf_token}"
+if "{gh_pat}" and not os.environ.get("GH_PAT"):
+    os.environ["GH_PAT"] = "{gh_pat}"
+if "{data_password}" and not os.environ.get("DATA_PASSWORD"):
+    os.environ["DATA_PASSWORD"] = "{data_password}"
+if "{tv_sessionid}" and not os.environ.get("TV_ULTIMATE_SESSIONID"):
+    os.environ["TV_ULTIMATE_SESSIONID"] = "{tv_sessionid}"
+if "{tv_sign}" and not os.environ.get("TV_ULTIMATE_SIGN"):
+    os.environ["TV_ULTIMATE_SIGN"] = "{tv_sign}"
 
 # Helper to re-trigger GitHub Actions workflow before 12h timeout
 def trigger_github_restart(node_idx, mode):

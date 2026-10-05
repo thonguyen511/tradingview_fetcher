@@ -35,5 +35,11 @@ jobs:
           pip install kaggle huggingface_hub pandas pyarrow requests
 
       - name: Dispatch Node ${{ github.event.inputs.node }}
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          DATA_PASSWORD: ${{ secrets.DATA_PASSWORD }}
+          TV_ULTIMATE_SESSIONID: ${{ secrets.TV_ULTIMATE_SESSIONID }}
+          TV_ULTIMATE_SIGN: ${{ secrets.TV_ULTIMATE_SIGN }}
         run: |
           python -m src.src_2.orchestration.kaggle_dispatcher dispatch ${{ github.event.inputs.mode }} --node ${{ github.event.inputs.node }}

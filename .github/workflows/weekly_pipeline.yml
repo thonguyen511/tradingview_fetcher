@@ -61,6 +61,7 @@ jobs:
       - name: Dispatch Kaggle Notebooks
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
           TV_ULTIMATE_SESSIONID: ${{ secrets.TV_ULTIMATE_SESSIONID }}
           TV_ULTIMATE_SIGN: ${{ secrets.TV_ULTIMATE_SIGN }}
           DATA_PASSWORD: ${{ secrets.DATA_PASSWORD }}
